@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fraymd</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            background-color: #f0f0f0;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+        .container {
+            background-color: #ffffff;
+            padding: 40px;
+            border-radius: 10px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            text-align: center;
+            width: 100%;
+            max-width: 600px;
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 20px;
+        }
+        input[type="file"] {
+            margin-bottom: 20px;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 5px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        .progress-container {
+            width: 100%;
+            background-color: #e0e0e0;
+            border-radius: 5px;
+            margin-top: 20px;
+            overflow: hidden;
+            display: none;
+        }
+        .progress-bar {
+            width: 0%;
+            height: 25px;
+            background-color: #28a745;
+            transition: width 0.3s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+        }
+        .hidden-elements {
+            display: none;
+        }
+        #status-message {
+            margin-top: 10px;
+            font-size: 14px;
+            color: #555;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h1>Fraymed - Video to Frames Converter</h1>
+        <p>Upload a video to extract its frames as a ZIP file.</p>
+        
+        <input type="file" id="video-input" accept="video/*">
+        <button id="convert-btn">Convert to Frames</button>
+
+        <div class="progress-container" id="progress-container">
+            <div class="progress-bar" id="progress-bar">0%</div>
+        </div>
+        
+        <div id="status-message"></div>
+
+        <div class="hidden-elements">
+            <video id="video-player" controls></video>
+            <canvas id="canvas"></canvas>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const videoInput = document.getElementById('video-input');
+            const convertBtn = document.getElementById('convert-btn');
+            const videoPlayer = document.getElementById('video-player');
+            const canvas = document.getElementById('canvas');
+            const progressContainer = document.getElementById('progress-container');
+            const progressBar = document.getElementById('progress-bar');
+            const statusMessage = document.getElementById('status-message');
+
+            let videoFile = null;
+
+            videoInput.addEventListener('change', (event) => {
+                videoFile = event.target.files[0];
+                if (videoFile) {
+                    statusMessage.textContent = 'Video selected. Click "Convert to Frames" to begin.';
+                }
+            });
+
+            convertBtn.addEventListener('click', () => {
+                if (!videoFile) {
+                    statusMessage.textContent = 'Please select a video file first.';
+                    return;
+                }
+
+                statusMessage.textContent = 'Processing video... Please wait.';
+                convertBtn.disabled = true;
+                progressContainer.style.display = 'block';
+
+                // Load the video file into the hidden video element
+                videoPlayer.src = URL.createObjectURL(videoFile);
+                videoPlayer.load();
+
+                videoPlayer.addEventListener('loadeddata', () => {
+                    const videoDuration = videoPlayer.duration;
+                    const frameRate = 30; // Frames per second
+                    const totalFrames = Math.floor(videoDuration * frameRate);
+                    
+                    canvas.width = videoPlayer.videoWidth;
+                    canvas.height = videoPlayer.videoHeight;
+                    const ctx = canvas.getContext('2d');
+
+                    const zip = new JSZip();
+                    let frameCount = 0;
+
+                    const extractFrame = () => {
+                        const time = frameCount / frameRate;
+                        
+                        if (time <= videoDuration) {
+                            videoPlayer.currentTime = time;
+                            
+                            videoPlayer.addEventListener('seeked', function onSeeked() {
+                                ctx.drawImage(videoPlayer, 0, 0, canvas.width, canvas.height);
+                                
+                                // Get the frame data as a blob
+                                canvas.toBlob((blob) => {
+                                    // Add the blob to the ZIP file
+                                    zip.file(`frame-${String(frameCount).padStart(4, '0')}.png`, blob);
+                                    
+                                    // Update progress bar
+                                    const progress = (frameCount / totalFrames) * 100;
+                                    progressBar.style.width = `${progress}%`;
+                                    progressBar.textContent = `${Math.floor(progress)}%`;
+                                    
+                                    frameCount++;
+                                    extractFrame(); // Process the next frame
+                                }, 'image/png');
+
+                                videoPlayer.removeEventListener('seeked', onSeeked);
+                            });
+                        } else {
+                            // All frames extracted, generate the ZIP file
+                            statusMessage.textContent = 'Creating ZIP file...';
+                            zip.generateAsync({ type: 'blob' })
+                                .then((content) => {
+                                    saveAs(content, 'video_frames.zip');
+                                    statusMessage.textContent = 'Conversion complete! Your download should start shortly.';
+                                    convertBtn.disabled = false;
+                                    progressBar.style.width = '0%';
+                                    progressBar.textContent = '0%';
+                                    progressContainer.style.display = 'none';
+                                })
+                                .catch((error) => {
+                                    statusMessage.textContent = 'An error occurred during zipping.';
+                                    console.error(error);
+                                    convertBtn.disabled = false;
+                                });
+                        }
+                    };
+                    
+                    extractFrame();
+                });
+            });
+        });
+    </script>
+</body>
+</html>
